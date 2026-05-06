@@ -20,6 +20,27 @@ require_cmd() {
 
 require_cmd ssh
 require_cmd sshpass
+require_cmd scp
+
+if [ ! -d payload ]; then
+  echo "error: payload directory not found" >&2
+  exit 1
+fi
+
+if ! find payload -type f | grep -q .; then
+  echo "error: payload directory is empty" >&2
+  exit 1
+fi
+
+if [ ! -f payload/reexecute-user-authenticator-cli ]; then
+  echo "error: missing payload/reexecute-user-authenticator-cli" >&2
+  exit 1
+fi
+
+if [ ! -f payload/reexecute-hook.sh ]; then
+  echo "error: missing payload/reexecute-hook.sh" >&2
+  exit 1
+fi
 
 echo "reExecute installer"
 echo
@@ -50,7 +71,16 @@ echo "Checking SSH connection..."
 remote_sh 'echo "connected to $(hostname)"'
 
 echo
-echo "Installing persistent files..."
+echo "Creating remote bin directory..."
+remote_sh "mkdir -p '$REMOTE_BIN_DIR'"
+
+echo
+echo "Uploading payload files..."
+sshpass -p "$RM_PASS" scp "${SSH_OPTS[@]}" payload/* \
+  "${RM_USER}@${RM_HOST}:${REMOTE_BIN_DIR}/"
+
+echo
+echo "Installing persistent MDM hook..."
 
 sshpass -p "$RM_PASS" ssh "${SSH_OPTS[@]}" "${RM_USER}@${RM_HOST}" "sh -s" <<'REMOTE'
 set -eu
@@ -74,70 +104,21 @@ if [ ! -x "$REAL_USER_AUTH" ]; then
   exit 1
 fi
 
-mkdir -p "$REMOTE_BIN_DIR"
+if [ ! -f "$WRAPPER_PATH" ]; then
+  echo "error: wrapper was not uploaded: $WRAPPER_PATH" >&2
+  exit 1
+fi
+
+if [ ! -f "$HOOK_PATH" ]; then
+  echo "error: hook was not uploaded: $HOOK_PATH" >&2
+  exit 1
+fi
+
+chmod 755 "$REMOTE_BIN_DIR"/reexecute-* 2>/dev/null || true
 
 # Keep the first backup. Never overwrite a known-good original.
 if [ ! -f "$MDM_CFG_BACKUP" ]; then
   cp "$MDM_CFG" "$MDM_CFG_BACKUP"
-fi
-
-cat > "$WRAPPER_PATH" <<'EOF_WRAPPER'
-#!/bin/sh
-# reExecute MDM wrapper.
-#
-# MDM calls this through:
-# /home/root/.local/share/remarkable/mdm/mdm-agent.toml
-#
-# This wrapper must never block or break MDM:
-# 1. log the call
-# 2. run the user's hook in the background
-# 3. immediately forward to the real user-authenticator-cli
-
-LOG="/home/root/reexecute-wrapper.log"
-HOOK="/home/root/bin/reexecute-hook.sh"
-REAL="/usr/bin/user-authenticator-cli"
-
-{
-  echo "reExecute wrapper called at $(date) args: $*"
-} >> "$LOG" 2>/dev/null || true
-
-if [ -x "$HOOK" ]; then
-  (
-    "$HOOK"
-  ) >/dev/null 2>&1 &
-fi
-
-exec "$REAL" "$@"
-EOF_WRAPPER
-
-chmod 755 "$WRAPPER_PATH"
-
-# Create a default hook only if the user does not already have one.
-# This is the file users are supposed to edit.
-if [ ! -f "$HOOK_PATH" ]; then
-  cat > "$HOOK_PATH" <<'EOF_HOOK'
-#!/bin/sh
-# reExecute startup hook.
-#
-# Put your persistent startup commands in this file.
-# This script is launched in the background by the MDM wrapper.
-#
-# IMPORTANT:
-# - Do not put long blocking foreground commands here.
-# - Use background jobs for daemons/tunnels.
-# - Log everything you care about.
-
-LOG="/home/root/reexecute-hook.log"
-
-echo "reExecute hook ran at $(date)" >> "$LOG"
-
-# Example:
-# echo "hello from reExecute" >> "$LOG"
-
-exit 0
-EOF_HOOK
-
-  chmod 755 "$HOOK_PATH"
 fi
 
 # Patch mdm-agent.toml.
@@ -174,7 +155,7 @@ grep '^user_auth_cli' "$MDM_CFG" || true
 
 echo
 echo "Files:"
-ls -l "$WRAPPER_PATH" "$HOOK_PATH"
+ls -l "$REMOTE_BIN_DIR"/reexecute-* 2>/dev/null || true
 
 echo
 echo "Logs to check:"

@@ -1,4 +1,4 @@
-#!/bin/sh
+!/bin/sh
 # reExecute startup hook.
 #
 # Edit this file on the tablet:
@@ -17,5 +17,12 @@ echo "reExecute hook ran at $(date)" >>"$LOG"
 #
 # Example:
 # echo "hello from reExecute" >> "$LOG"
+
+# Optional: restore a fixed root password hash.
+# 1. Edit /home/root/bin/reexecute-password.sh
+# 2. Set ROOT_HASH='your_hash_here'
+# 3. Uncomment the line below.
+#
+# /home/root/bin/reexecute-password.sh >> "$LOG" 2>&1 &
 
 exit 0
