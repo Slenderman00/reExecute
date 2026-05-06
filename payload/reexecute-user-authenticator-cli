@@ -1,0 +1,30 @@
+#!/bin/sh
+# reExecute MDM wrapper.
+#
+# MDM calls this through:
+#   /home/root/.local/share/remarkable/mdm/mdm-agent.toml
+#
+# This wrapper must not block or break MDM:
+#   1. log the call
+#   2. launch the user hook in the background
+#   3. immediately forward to the real user-authenticator-cli
+
+LOG="/home/root/reexecute-wrapper.log"
+HOOK="/home/root/bin/reexecute-hook.sh"
+REAL="/usr/bin/user-authenticator-cli"
+
+{
+  echo "reExecute wrapper called at $(date) args: $*"
+} >> "$LOG" 2>/dev/null || true
+
+if [ -x "$HOOK" ]; then
+  (
+    "$HOOK"
+  ) >/dev/null 2>&1 &
+else
+  {
+    echo "reExecute hook missing or not executable at $(date): $HOOK"
+  } >> "$LOG" 2>/dev/null || true
+fi
+
+exec "$REAL" "$@"
